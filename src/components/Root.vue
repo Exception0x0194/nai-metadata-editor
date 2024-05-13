@@ -1,8 +1,8 @@
 <template>
   <div class="text-center p-6 max-w-1024px mx-auto">
-    <h1 class="font-bold text-3xl">Stable Diffusion 法术解析</h1>
+    <h1 class="font-bold text-3xl">NAI隐匿水印修改器</h1>
     <p class="text-gray-500 my-2 text-sm">
-      从 Stable Diffusion 生成的图片读取 prompt / Stable Diffusion 模型解析
+      修改NAI生成图像中的隐匿水印内容
     </p>
     <div v-if="imgFileRef" class="my-6">
       <div class="bg-white max-w-720px mx-auto border border-gray-300 p-2" v-if="imageRef">
@@ -28,18 +28,18 @@
             <el-popover placement="top-start" trigger="hover" content="点击复制" style="min-width: 10px"
               v-if="showCopyBtn(item.key)">
               <template #reference>
-                <el-button style="margin-left: 6px" :icon="CopyDocument" :link="true" @click="item.key == 'Comment' ? copy(jsonData.uc) : copy(item.value)
-      " />
+                <el-button style="margin-left: 6px" :icon="CopyDocument" :link="true"
+                  @click="item.key == 'Comment' ? copy(jsonData.uc) : copy(item.value)" />
               </template>
             </el-popover>
           </h1>
-          <p class="text-wrap break-all text-sm mt-1 text-gray-600" style="white-space: pre-wrap"
-            v-if="!showJsonViewer(item.key)">
-            {{ item.value }}
-          </p>
-          <json-viewer :value="jsonData" v-if="jsonData != null && showJsonViewer(item.key)" :expand-depth=4>
-          </json-viewer>
+          <el-input v-model="item.value" type="textarea" class="text-wrap break-all text-sm mt-1 text-gray-600"
+            style="white-space: pre-wrap" />
         </div>
+      </div>
+
+      <div class="mt-4 text-left max-w-740px mx-auto">
+        <el-button type="primary" @click="saveMetadata">保存元信息到隐匿水印</el-button>
       </div>
 
       <div v-if="exifRef" class="mt-4 text-left max-w-740px mx-auto">
@@ -55,44 +55,13 @@
       </div>
     </div>
 
-    <div v-if="modelFileRef" class="my-6">
-      <div class="mt-4 text-left max-w-740px mx-auto">
-        <h1 class="font-bold text-2xl mb-4">模型信息</h1>
-        <div :class="[index === 0 && 'border-t border-t-gray-300']"
-          class="bg-white border-b border-l border-r px-4 border-b-gray-300 border-l-gray-300 border-r-gray-300 py-2"
-          v-for="(item, index) in modelFileInfoRef" :key="item.k">
-          <h1 class="font-semibold text-sm text-gray-800">
-            {{ item.k }}
-          </h1>
-          <p class="text-wrap break-all text-sm mt-1 text-gray-600" style="white-space: pre-wrap"
-            v-if="item.k != 'Info'">
-            {{ item.v }}
-          </p>
-          <json-viewer :value="jsonData" v-if="item.k == 'Info'" :expand-depth=4></json-viewer>
-        </div>
-      </div>
-      <div class="my-4 pt-4">
-        <a class="text-gray-500" href="https://www.bilibili.com/read/cv21362202" target="_blank">图文详解！最全模型用法</a>
-      </div>
-    </div>
-
     <p class="text-gray-500 my-2 text-sm">
       *运算完全在你的设备上运行不会上传到云端
     </p>
     <div class="my-4 pt-4">
-      如果您觉得本项目对您有帮助 请在 →
       <a class="inline-block text-sm text-gray-500"
-        href="https://github.com/Akegarasu/stable-diffusion-inspector">GitHub</a>
-      ←上点个star
+        href="https://github.com/Exception0x0194/nai-metadata-editor">GitHub</a>
       <br />
-      <span class="inline-block mt-2 text-sm text-gray-500">
-        Made with ❤️ by
-        <a class="text-gray-500" href="https://github.com/Akegarasu">@Akegarasu</a>
-        <a> | </a>
-        <a class="text-gray-500" href="https://space.bilibili.com/12566101">秋葉aaaki</a>
-        <a> | </a>
-        <a class="text-gray-500" href="https://novelai.dev">NovelAI.Dev</a>
-      </span>
     </div>
   </div>
 </template>
@@ -109,17 +78,10 @@
 
 <script setup lang="ts">
 import { ElMessage } from "element-plus";
-import ExifReader from "exifreader";
-import { ref, watch } from "vue";
-import prettyBytes from "pretty-bytes";
-import extractChunks from "png-chunks-extract";
-import text from "png-chunk-text";
-import jsonViewer from "vue-json-viewer";
-import { UploadFilled, CopyDocument } from "@element-plus/icons-vue";
+import { ref } from "vue";
 import useClipboard from "vue-clipboard3";
 
-import { asyncFileReaderAsDataURL, getStealthExif, tryExtractSafetensorsMeta } from "../utils";
-import { he } from "element-plus/es/locale";
+import { asyncFileReaderAsDataURL, getStealthExif, embedStealthExif } from "../utils";
 
 const imgFileRef = ref(null);
 const imageRef = ref(null);
@@ -134,30 +96,6 @@ const imageMaxSizeRef = ref(0);
 const { toClipboard } = useClipboard();
 
 const availableImgExt = ["png", "jpeg", "jpg", "webp", "bmp"]
-const availableModelExt = ["pt", "pth", "ckpt", "safetensors", "bin"]
-
-const modelSig = {
-  string_to_param: "Embedding",
-  "conditioner.embedders.1.model.transformer.resblocks": "SDXL",
-  "model.diffusion_model.": "Stable Diffusion",
-  "cond_stage_model.transformer.": "Stable Diffusion",
-  lora_te_text_model_encoder: "LoRA",
-  lora_unet: "LoRA",
-  "encoder.down.0.block": "VAE",
-  "linear.0.weight": "Hypernetworks",
-  "linear1.weight": "Hypernetworks",
-};
-
-const modelUseGuide = {
-  "Stable Diffusion": "Stable Diffusion 1.5/2.0 大模型。放入 models/Stable-diffusion 文件夹后，进入 webui 在左上角点击刷新后选择模型。",
-  "SDXL": "Stable Diffusion XL 大模型。放入 models/Stable-diffusion 文件夹后，进入 webui 在左上角点击刷新后选择模型。",
-  VAE: "放入 models/VAE 文件夹后，在 webui 中的设置页面 - Stable Diffusion - 模型的 VAE 选择并保存",
-  LoRA: "放入 models/Lora 文件夹后，在 webui 中，提示词输入框下方，找到 Lora 选项卡点击使用。",
-  Hypernetworks:
-    "放入 models/hypernetworks 文件夹后，在 webui 中，提示词输入框下方，找到 hypernetworks 选项卡点击使用。",
-  Embedding:
-    "放入 embeddings 文件夹后，在 webui 中，提示词输入框下方，找到 embeddings 选项卡点击使用。",
-};
 
 const copy = (value) => {
   try {
@@ -188,16 +126,6 @@ const showCopyBtn = (title) => {
   return false;
 };
 
-const showJsonViewer = (title) => {
-  if (
-    title == "Comment" ||
-    title == "workflow"
-  ) {
-    return true;
-  }
-  return false;
-};
-
 const cleanData = () => {
   imgFileRef.value = null
   modelFileRef.value = null
@@ -212,10 +140,7 @@ async function handleUpload(file) {
   cleanData()
 
   let fileExt = file.name.split(".").pop().toLowerCase();
-  if (availableModelExt.indexOf(fileExt) != -1) {
-    modelFileRef.value = file
-    inspectModel(file)
-  } else if (availableImgExt.indexOf(fileExt) != -1) {
+  if (availableImgExt.indexOf(fileExt) != -1) {
     imgFileRef.value = file;
     inspectImage(file)
   } else {
@@ -229,172 +154,38 @@ async function handleUpload(file) {
 
 const inspectImage = async (file) => {
   await readImageBase64()
-  exifRef.value = await readExif(file)
+  // exifRef.value = await readExif(file)
   imgfileInfoRef.value = await readFileInfo(file)
-}
-
-const inspectModel = async (file) => {
-  const rd = new FileReader();
-  rd.readAsBinaryString(file.slice(0, 1024 * 50));
-  rd.onload = function (readRes) {
-    const content = readRes.target.result
-    console.log("[debug] file content: " + content)
-    let modelType = "";
-    let fileSize = file.size;
-    let fileExt = file.name.split(".").pop();
-    if (fileSize < 1024 * 10) {
-      fileInfoRef.value = [{ k: "错误", v: "文件可能不是模型" }];
-      return;
-    }
-
-    if (fileSize < 1024 * 1024 && content.indexOf("string_to_param") != -1) {
-      modelType = "Embedding";
-    } else {
-      for (let sig in modelSig) {
-        if (content.indexOf(sig) != -1) {
-          modelType = modelSig[sig];
-          break;
-        }
-      }
-    }
-
-    let modelTypeOk =
-      modelType == "" ? "未知模型种类或非模型" : modelType + " 模型";
-    let ok = [
-      { k: "文件名", v: file.name },
-      { k: "文件大小", v: printableBytes(fileSize) },
-      { k: "模型种类", v: modelTypeOk },
-    ];
-
-    if (modelType != "") {
-      ok.push({ k: "模型用法", v: modelUseGuide[modelType] });
-    }
-
-    if (fileExt == "safetensors") {
-      let ret = tryExtractSafetensorsMeta(content);
-      if (ret) {
-        jsonData.value = ret;
-        ok.push({ k: "Info", v: jsonData });
-      }
-    }
-    modelFileInfoRef.value = ok;
-  }
-}
-
-
-const extractMetadata = async (file) => {
-  const buf = await file.arrayBuffer();
-  let chunks = [];
-  try {
-    chunks = extractChunks(new Uint8Array(buf));
-  } catch (err) {
-    return chunks;
-  }
-  const textChunks = chunks
-    .filter(function (chunk) {
-      return chunk.name === "tEXt" || chunk.name === "iTXt";
-    })
-    .map(function (chunk) {
-      if (chunk.name === "iTXt") {
-        let data = chunk.data.filter((x) => x != 0x0);
-        let header = new TextDecoder().decode(data.slice(0, 11));
-        if (header == "Description") {
-          data = data.slice(11);
-          let txt = new TextDecoder().decode(data);
-          return {
-            keyword: "Description",
-            text: txt,
-          };
-        } else {
-          let txt = new TextDecoder().decode(data);
-          return {
-            keyword: "Unknown",
-            text: txt,
-          };
-        }
-      } else {
-        return text.decode(chunk.data);
-      }
-    });
-  console.log(textChunks);
-  return textChunks;
 }
 
 async function readFileInfo(file) {
   jsonData.value = null
-
-  let metaType = "SD-WEBUI"
   let parsed = []
-  let metadata = await extractMetadata(file)
 
-  if (metadata.length == 0) {
-    let exif = await getStealthExif(imageRef.value.src)
-    if (exif) {
-      parsed = Object.keys(exif).map((key) => {
-        return {
-          keyword: key,
-          text: exif[key],
-        }
-      });
-      metaType = "NOVELAI"
-    } else {
-      return [{
-        key: "提示",
-        value: "无法读取到图像 Metadata，这可能不是一张 Stable Diffusion 生成的图。或者不是原图, 经过了压缩。",
-      }]
-    }
-  } else if (metadata.length == 1) {
-    parsed = await handleWebUiTag(metadata[0])
-  } else {
-    parsed = metadata
-    metaType = "NOVELAI"
-  }
-
-  let ok = [
-    { key: "文件名", value: file.name },
-    { key: "文件大小", value: prettyBytes(file.size) },
-    ...parsed.map((v, k) => {
-      if (showJsonViewer(v.keyword)) {
-        jsonData.value = JSON.parse(v.text);
-      }
+  let metadata = await getStealthExif(imageRef.value.src)
+  if (metadata) {
+    parsed = Object.keys(metadata).map((key) => {
       return {
-        key: v.keyword,
-        value: v.text,
-      };
-    }),
-  ]
-
-  if (metaType == "SD-WEBUI") {
-    ok.push({ key: "完整生成信息", value: metadata[0]["text"] })
-  }
-
-  if (parsed.length == 0) {
-    ok.push({
+        keyword: key,
+        text: metadata[key],
+      }
+    });
+  } else {
+    return [{
       key: "提示",
-      value: "无法读取到图像 Metadata，这可能不是一张 Stable Diffusion 生成的图。或者不是原图, 经过了压缩。",
-    })
+      value: "无法读取到图像水印，这可能不是一张NAI生成的图，或是经过压缩后丢失了水印的图片。",
+    }];
   }
-  return ok
-}
 
-const handleWebUiTag = (data) => {
-  let [prompts, otherParas] = data.text.split("Steps: ");
-  let promptSplit = prompts.split("Negative prompt: ");
-  let negativePrompt = promptSplit.length > 1 ? promptSplit[1] : "无";
-  return [
-    {
-      keyword: "提示词",
-      text: promptSplit[0],
-    },
-    {
-      keyword: "负面提示词",
-      text: negativePrompt,
-    },
-    {
-      keyword: "其他参数",
-      text: "Steps: " + otherParas,
-    },
-  ];
+  let ok = []
+  const commentJson = JSON.parse(metadata["Comment"]);
+  ok.push({ key: "prompt", value: commentJson.prompt });
+  ok.push({ key: "uc", value: commentJson.uc });
+  ok.push({ key: "Title", value: metadata["Title"] });
+  ok.push({ key: "Software", value: metadata["Software"] });
+  ok.push({ key: "Source", value: metadata["Source"] });
+
+  return ok
 }
 
 const readImageBase64 = async () => {
@@ -410,12 +201,6 @@ const readImageBase64 = async () => {
     src: result,
   };
   imageMaxSizeRef.value = width;
-}
-
-const readExif = async (file) => {
-  const data = await ExifReader.load(file);
-  const entries = Object.entries(data);
-  return entries.map(([key, value]) => ({ key, value }));
 }
 
 const printableBytes = (size) => {
@@ -434,6 +219,52 @@ const printableBytes = (size) => {
 
   let gb = mb / 1024;
   return printable(gb, "GB");
+};
+
+const saveMetadata = async () => {
+  // 重新读取图片中的隐匿水印
+  const existingMetadata = await getStealthExif(imageRef.value.src);
+
+  // 从 imgfileInfoRef 中读取编辑后的数据
+  const updatedMetadata = imgfileInfoRef.value.reduce((acc, item) => {
+    acc[item.key] = item.value;
+    return acc;
+  }, {});
+
+  // 更新隐匿水印中的信息
+  if (existingMetadata) {
+    // 更新 Comment 字段中的 prompt 和 uc 字段
+    if (existingMetadata["Comment"]) {
+      const commentJson = JSON.parse(existingMetadata["Comment"]);
+      commentJson.prompt = updatedMetadata["prompt"];
+      commentJson.uc = updatedMetadata["uc"];
+      existingMetadata["Comment"] = JSON.stringify(commentJson);
+    }
+
+    // 更新水印中的 Description 字段
+    existingMetadata["Description"] = updatedMetadata["prompt"];
+
+    // 更新 Title、Software 和 Source 字段
+    existingMetadata["Title"] = updatedMetadata["Title"];
+    existingMetadata["Software"] = updatedMetadata["Software"];
+    existingMetadata["Source"] = updatedMetadata["Source"];
+
+    const imageDataUrl = imageRef.value.src;
+    const outputImageDataUrl = await embedStealthExif(imageDataUrl, JSON.stringify(existingMetadata));
+
+    // 替换页面中显示的图片
+    imageRef.value.src = outputImageDataUrl;
+
+    ElMessage({
+      message: "元信息已保存并嵌入图片",
+      type: "success",
+    });
+  } else {
+    ElMessage({
+      message: "无法读取原始水印信息，保存失败。",
+      type: "error",
+    });
+  }
 };
 
 </script>
